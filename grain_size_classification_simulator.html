@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<!--
+  OpenGeo prototype 5: Grain-size distribution & classification (TP2.1)
+  ------------------------------------------------------------------
+  WHAT IT DOES
+  The learner DRAGS the points of a particle-size distribution (sieve)
+  curve up or down. The simulator reads off D10, D30, D60, computes the
+  uniformity coefficient Cu and curvature coefficient Cc, splits the soil
+  into clay / silt / sand / gravel fractions, and gives a classification.
+  Preset buttons load typical curves.
+
+  KEY QUANTITIES
+    Dn   = particle diameter at n% passing (by interpolation in log-d)
+    Cu   = D60 / D10              (uniformity coefficient)
+    Cc   = D30^2 / (D60 * D10)    (coefficient of curvature)
+  FRACTION BOUNDARIES (SFS-EN ISO 14688-1, used in Finland)
+    clay < 0.002 mm | silt 0.002-0.063 | sand 0.063-2 | gravel 2-63
+  GRADING (USCS-style)
+    coarse soil is well graded if  gravel: Cu>=4 & 1<=Cc<=3
+                                    sand:   Cu>=6 & 1<=Cc<=3
+    fine-grained soil (fines >= 50%) needs plasticity (Atterberg) to classify.
+
+  HOW TO RUN
+  Double-click the file, or open in any browser. Drag the white points.
+  No internet, no install. Embed in Moodle/DigiCampus as an HTML file
+  resource or HTML block.
+
+  ASSUMPTIONS  [check before any real deliverable]
+  - The curve is whatever the learner draws; control points sit at fixed
+    sieve sizes. Fraction boundaries follow ISO 14688 (Finnish practice);
+    USCS uses 0.075 / 4.75 mm instead - state which the course adopts.
+  - Default curves are ILLUSTRATIVE, not measured GIR data.
+
+  Author scaffold for D. Mumtaz / OpenGeo. Tune and translate before use.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grain-size Distribution & Classification — OpenGeo prototype</title>
+<style>
+  :root{
+    --bg:#f5f6f4; --panel:#ffffff; --ink:#1f2a24; --muted:#5d6b62;
+    --line:#d8ddd6; --accent:#2f6f4f; --curve:#2c3e50; --mark:#c0563b;
+    --clay:#9c7bb0; --silt:#5f9ea0; --sand:#d9b35c; --gravel:#b07a4a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.45}
+  header{padding:18px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+  h1{font-size:1.15rem;margin:0 0 4px}
+  header p{margin:0;color:var(--muted);font-size:.85rem}
+  .wrap{display:flex;flex-wrap:wrap;gap:18px;padding:18px;max-width:1180px;margin:0 auto}
+  .controls{flex:1 1 280px;min-width:260px;background:var(--panel);
+            border:1px solid var(--line);border-radius:10px;padding:16px}
+  .stage{flex:2 1 620px;min-width:340px;background:var(--panel);
+         border:1px solid var(--line);border-radius:10px;padding:12px}
+  canvas{width:100%;height:auto;display:block;touch-action:none;cursor:crosshair}
+  .group{margin-bottom:14px;padding-bottom:12px;border-bottom:1px dashed var(--line)}
+  .group:last-child{border-bottom:none;margin-bottom:0}
+  .group h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin:0 0 8px}
+  .readout{display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:.9rem;
+           font-variant-numeric:tabular-nums;margin-top:6px}
+  .readout .k{color:var(--muted)}
+  .readout .big{font-weight:600}
+  .frac{display:grid;grid-template-columns:auto 1fr auto;gap:3px 8px;font-size:.86rem;
+        font-variant-numeric:tabular-nums;margin-top:4px;align-items:center}
+  .sw{width:11px;height:11px;border-radius:2px}
+  .bar{height:9px;border-radius:3px;background:#eceee9;overflow:hidden}
+  .bar>i{display:block;height:100%}
+  .status{margin-top:10px;padding:8px 10px;border-radius:7px;font-size:.88rem;font-weight:600;text-align:center;
+          background:#e3f0e6;color:#2f6f4f}
+  .topbar{display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px;flex-wrap:wrap}
+  .seg{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+  button{font:inherit;font-size:.78rem;padding:5px 9px;border:1px solid var(--line);
+         background:#fff;border-radius:7px;cursor:pointer;color:var(--ink)}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  .note{font-size:.74rem;color:var(--muted);margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Grain-size Distribution &amp; Classification</h1>
+  <p id="subtitle">Drag the curve points — read Cu, Cc, fractions and class — OpenGeo prototype (TP2.1)</p>
+</header>
+
+<div class="wrap">
+  <!-- ============ CONTROL PANEL ============ -->
+  <div class="controls">
+    <div class="topbar">
+      <button id="langBtn">Suomeksi</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+
+    <div class="group">
+      <h2 id="hPreset">Preset curves</h2>
+      <div class="seg">
+        <button id="pWGS">Well-graded sand</button>
+        <button id="pUS">Uniform sand</button>
+        <button id="pSC">Silty clay</button>
+        <button id="pGAP">Gap-graded</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 id="hKey">Grading indices</h2>
+      <div class="readout" id="readout"></div>
+    </div>
+
+    <div class="group">
+      <h2 id="hFrac">Fractions</h2>
+      <div class="frac" id="frac"></div>
+    </div>
+
+    <div class="group">
+      <h2 id="hClass">Classification</h2>
+      <div class="status" id="status"></div>
+    </div>
+
+    <p class="note" id="note">Illustrative curves only — ISO 14688 fraction boundaries. Verify scheme and terminology before use.</p>
+  </div>
+
+  <!-- ============ DRAWING STAGE ============ -->
+  <div class="stage">
+    <canvas id="cv" width="1000" height="560"></canvas>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ---------- Control points: fixed sieve diameters (mm), editable % passing ----------
+// Diameters include the ISO fraction boundaries 0.002 / 0.063 / 2 / 63.
+const DIAS = [0.001, 0.002, 0.006, 0.02, 0.063, 0.2, 0.6, 2, 6.3, 20, 63];
+
+// Preset % passing arrays (ILLUSTRATIVE)
+const PRESETS = {
+  WGS:[0,1,3,8,18,40,65,85,95,99,100],     // well-graded sand
+  US :[0,0,0,1,4,35,92,99,100,100,100],     // uniform / poorly graded sand
+  SC :[18,33,52,74,88,95,98,100,100,100,100],// silty clay (fine-grained)
+  GAP:[0,2,7,14,18,20,22,58,86,97,100]      // gap-graded
+};
+
+let pass = PRESETS.WGS.slice();   // current % passing at each DIAS
+let lang = "en";
+let dragIdx = -1;
+
+const DMIN = 0.001, DMAX = 100;   // x-axis range (mm)
+const log10 = x => Math.log(x)/Math.LN10;
+
+// ---------- Bilingual strings (extend / correct as needed) ----------
+const T = {
+ en:{title:"Grain-size Distribution & Classification",
+     subtitle:"Drag the curve points — read Cu, Cc, fractions and class — OpenGeo prototype (TP2.1)",
+     hPreset:"Preset curves", wgs:"Well-graded sand", us:"Uniform sand", sc:"Silty clay", gap:"Gap-graded",
+     hKey:"Grading indices", hFrac:"Fractions", hClass:"Classification",
+     note:"Illustrative curves only — ISO 14688 fraction boundaries. Verify scheme and terminology before use.",
+     langBtn:"Suomeksi", reset:"Reset",
+     d10:"D₁₀", d30:"D₃₀", d60:"D₆₀", cu:"Uniformity Cu = D₆₀/D₁₀", cc:"Curvature Cc = D₃₀²/(D₆₀·D₁₀)",
+     clay:"Clay", silt:"Silt", sand:"Sand", gravel:"Gravel",
+     xaxis:"particle diameter (mm) — log scale", yaxis:"percent passing (%)",
+     wellGravel:"Well-graded gravel", poorGravel:"Poorly graded gravel",
+     wellSand:"Well-graded sand", poorSand:"Poorly graded sand",
+     fineClay:"Fine-grained — clay-dominant (needs Atterberg limits)",
+     fineSilt:"Fine-grained — silt-dominant (needs Atterberg limits)",
+     withFines:" with significant fines", drag:"drag points ↕"},
+ fi:{title:"Rakeisuuskäyrä & maalajiluokitus",
+     subtitle:"Raahaa pisteitä — lue Cu, Cc, lajitteet ja luokka — OpenGeo-prototyyppi (TP2.1)",
+     hPreset:"Esimerkkikäyrät", wgs:"Suhteistunut hiekka", us:"Tasarakeinen hiekka", sc:"Silttinen savi", gap:"Epäjatkuva",
+     hKey:"Suhteistumisluvut", hFrac:"Lajitteet", hClass:"Luokitus",
+     note:"Vain havainnollistavat käyrät — ISO 14688 -lajiterajat. Tarkista luokitus ja termit ennen käyttöä.",
+     langBtn:"In English", reset:"Palauta",
+     d10:"D₁₀", d30:"D₃₀", d60:"D₆₀", cu:"Raekokosuhde Cu = D₆₀/D₁₀", cc:"Kaarevuusluku Cc = D₃₀²/(D₆₀·D₁₀)",
+     clay:"Savi", silt:"Siltti", sand:"Hiekka", gravel:"Sora",
+     xaxis:"raekoko (mm) — log-asteikko", yaxis:"läpäisyprosentti (%)",
+     wellGravel:"Suhteistunut sora", poorGravel:"Tasarakeinen sora",
+     wellSand:"Suhteistunut hiekka", poorSand:"Tasarakeinen hiekka",
+     fineClay:"Hienorakeinen — savivaltainen (vaatii Atterbergin rajat)",
+     fineSilt:"Hienorakeinen — silttivaltainen (vaatii Atterbergin rajat)",
+     withFines:", runsaasti hienoainesta", drag:"raahaa pisteitä ↕"}
+};
+
+// ---------- Interpolation helpers ----------
+// % passing at an arbitrary diameter, by linear interpolation in log-d.
+function passAt(d){
+  if(d <= DIAS[0]) return pass[0];
+  if(d >= DIAS[DIAS.length-1]) return pass[pass.length-1];
+  for(let i=0;i<DIAS.length-1;i++){
+    if(d <= DIAS[i+1]){
+      const f=(log10(d)-log10(DIAS[i]))/(log10(DIAS[i+1])-log10(DIAS[i]));
+      return pass[i] + f*(pass[i+1]-pass[i]);
+    }
+  }
+  return 100;
+}
+// Diameter at a given % passing (inverse). Returns null if out of range.
+function dAt(P){
+  if(P < pass[0] || P > pass[pass.length-1]) return null;
+  for(let i=0;i<DIAS.length-1;i++){
+    const lo=pass[i], hi=pass[i+1];
+    if((P>=lo && P<=hi) && hi>lo){
+      const f=(P-lo)/(hi-lo);
+      return Math.pow(10, log10(DIAS[i]) + f*(log10(DIAS[i+1])-log10(DIAS[i])));
+    }
+  }
+  return null;
+}
+
+// ---------- Analysis ----------
+function analyse(){
+  const D10=dAt(10), D30=dAt(30), D60=dAt(60);
+  const Cu=(D10&&D60)?D60/D10:null;
+  const Cc=(D10&&D30&&D60)?(D30*D30)/(D60*D10):null;
+  const pClay = passAt(0.002);
+  const pSilt = passAt(0.063)-passAt(0.002);
+  const pSand = passAt(2)-passAt(0.063);
+  const pGravel = 100-passAt(2);
+  const fines = passAt(0.063);
+  return {D10,D30,D60,Cu,Cc,pClay,pSilt,pSand,pGravel,fines};
+}
+
+function classify(a,t){
+  if(a.fines >= 50){
+    return (a.pClay >= a.pSilt) ? t.fineClay : t.fineSilt;
+  }
+  const coarseGravel = a.pGravel > a.pSand;
+  let base, well;
+  if(coarseGravel){ well = (a.Cu!=null&&a.Cu>=4)&&(a.Cc!=null&&a.Cc>=1&&a.Cc<=3);
+    base = well ? t.wellGravel : t.poorGravel; }
+  else { well = (a.Cu!=null&&a.Cu>=6)&&(a.Cc!=null&&a.Cc>=1&&a.Cc<=3);
+    base = well ? t.wellSand : t.poorSand; }
+  if(a.fines > 12) base += t.withFines;
+  return base;
+}
+
+// ---------- Drawing ----------
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const PL = {x:80, y:40, w:840, h:430};   // plot rectangle
+
+const Xof = d => PL.x + (log10(d)-log10(DMIN))/(log10(DMAX)-log10(DMIN))*PL.w;
+const Yof = p => PL.y + (100-p)/100*PL.h;
+const Xinv = px => Math.pow(10, (px-PL.x)/PL.w*(log10(DMAX)-log10(DMIN)) + log10(DMIN));
+const Yinv = py => 100 - (py-PL.y)/PL.h*100;
+
+function draw(){
+  const t=T[lang], a=analyse();
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  // fraction bands
+  const bands=[[DMIN,0.002,css("--clay"),t.clay],[0.002,0.063,css("--silt"),t.silt],
+               [0.063,2,css("--sand"),t.sand],[2,DMAX,css("--gravel"),t.gravel]];
+  bands.forEach(([d1,d2,col,lab])=>{
+    const x1=Xof(d1), x2=Xof(Math.min(d2,DMAX));
+    ctx.fillStyle=col+"22"; ctx.fillRect(x1,PL.y,x2-x1,PL.h);
+    ctx.fillStyle=col; ctx.font="11px system-ui"; ctx.textAlign="center";
+    ctx.fillText(lab, (x1+x2)/2, PL.y-8);
+  });
+
+  // grid (decade + 1-2-5) and x labels
+  ctx.font="9px system-ui";
+  for(let dec=Math.pow(10,Math.floor(log10(DMIN))); dec<=DMAX; dec*=10){
+    for(const m of [1,2,5]){ const d=dec*m; if(d<DMIN||d>DMAX) continue;
+      ctx.strokeStyle="#e3e7e1"; ctx.beginPath(); ctx.moveTo(Xof(d),PL.y); ctx.lineTo(Xof(d),PL.y+PL.h); ctx.stroke();
+      ctx.fillStyle=css("--muted"); ctx.textAlign="center";
+      ctx.fillText(d<1?d.toString():d.toString(), Xof(d), PL.y+PL.h+13);
+    }
+  }
+  for(let p=0;p<=100;p+=10){ ctx.strokeStyle="#eceee9"; ctx.beginPath();
+    ctx.moveTo(PL.x,Yof(p)); ctx.lineTo(PL.x+PL.w,Yof(p)); ctx.stroke();
+    ctx.fillStyle=css("--muted"); ctx.textAlign="right"; ctx.fillText(p, PL.x-6, Yof(p)+3); }
+  ctx.strokeStyle=css("--muted"); ctx.strokeRect(PL.x,PL.y,PL.w,PL.h);
+
+  // D10/D30/D60 guide lines
+  [["D₆₀",a.D60,60],["D₃₀",a.D30,30],["D₁₀",a.D10,10]].forEach(([lab,d,p])=>{
+    if(!d) return; const x=Xof(d), y=Yof(p);
+    ctx.strokeStyle=css("--mark"); ctx.setLineDash([3,3]); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,Yof(0)); ctx.lineTo(x,y); ctx.lineTo(PL.x,y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=css("--mark"); ctx.font="10px system-ui"; ctx.textAlign="center";
+    ctx.fillText(lab, x, Yof(0)+12);
+  });
+
+  // the curve
+  ctx.strokeStyle=css("--curve"); ctx.lineWidth=2.6; ctx.beginPath();
+  DIAS.forEach((d,i)=>{ const X=Xof(d),Y=Yof(pass[i]); i===0?ctx.moveTo(X,Y):ctx.lineTo(X,Y); });
+  ctx.stroke(); ctx.lineWidth=1;
+
+  // draggable points
+  DIAS.forEach((d,i)=>{ const X=Xof(d),Y=Yof(pass[i]);
+    ctx.fillStyle="#fff"; ctx.strokeStyle=css("--curve"); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(X,Y, i===dragIdx?7:5, 0,2*Math.PI); ctx.fill(); ctx.stroke(); });
+  ctx.lineWidth=1;
+
+  // axis titles + hint
+  ctx.fillStyle=css("--ink"); ctx.font="11px system-ui"; ctx.textAlign="center";
+  ctx.fillText(t.xaxis, PL.x+PL.w/2, PL.y+PL.h+30);
+  ctx.save(); ctx.translate(PL.x-44, PL.y+PL.h/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText(t.yaxis, 0, 0); ctx.restore();
+  ctx.fillStyle=css("--muted"); ctx.font="10px system-ui"; ctx.textAlign="right";
+  ctx.fillText(t.drag, PL.x+PL.w, PL.y-8);
+
+  updatePanels(a);
+}
+
+function updatePanels(a){
+  const t=T[lang];
+  const fmt=v=>v==null?"—":(v<0.01?v.toExponential(1):v.toFixed(3));
+  document.getElementById("readout").innerHTML =
+    `<span class="k">${t.d10}</span><span>${fmt(a.D10)} mm</span>`+
+    `<span class="k">${t.d30}</span><span>${fmt(a.D30)} mm</span>`+
+    `<span class="k">${t.d60}</span><span>${fmt(a.D60)} mm</span>`+
+    `<span class="k">${t.cu}</span><span class="big">${a.Cu==null?"—":a.Cu.toFixed(1)}</span>`+
+    `<span class="k">${t.cc}</span><span class="big">${a.Cc==null?"—":a.Cc.toFixed(2)}</span>`;
+
+  const fr=[[t.clay,a.pClay,css("--clay")],[t.silt,a.pSilt,css("--silt")],
+            [t.sand,a.pSand,css("--sand")],[t.gravel,a.pGravel,css("--gravel")]];
+  document.getElementById("frac").innerHTML = fr.map(([lab,v,col])=>
+    `<span class="sw" style="background:${col}"></span>`+
+    `<span>${lab}</span><span>${Math.max(0,v).toFixed(0)}%</span>`+
+    `<span></span><span class="bar"><i style="width:${Math.max(0,Math.min(100,v))}%;background:${col}"></i></span><span></span>`
+  ).join("");
+
+  document.getElementById("status").textContent = classify(a,t);
+}
+
+// ---------- Pointer interaction (drag points vertically) ----------
+function canvasXY(e){
+  const r=cv.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*(cv.width/r.width), y:(e.clientY-r.top)*(cv.height/r.height) };
+}
+cv.addEventListener("pointerdown", e=>{
+  const {x,y}=canvasXY(e); let best=-1, bd=18;
+  DIAS.forEach((d,i)=>{ const dx=x-Xof(d), dy=y-Yof(pass[i]); const dist=Math.hypot(dx,dy);
+    if(dist<bd){ bd=dist; best=i; } });
+  if(best>=0){ dragIdx=best; cv.setPointerCapture(e.pointerId); draw(); }
+});
+cv.addEventListener("pointermove", e=>{
+  if(dragIdx<0) return;
+  const {y}=canvasXY(e);
+  let p=Math.round(Yinv(y));
+  const lo = dragIdx>0 ? pass[dragIdx-1] : 0;             // keep monotonic non-decreasing
+  const hi = dragIdx<pass.length-1 ? pass[dragIdx+1] : 100;
+  pass[dragIdx]=Math.max(lo, Math.min(hi, Math.max(0,Math.min(100,p))));
+  draw();
+});
+function endDrag(){ dragIdx=-1; draw(); }
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+
+// ---------- Controls ----------
+const setPreset = key => { pass = PRESETS[key].slice(); draw(); };
+document.getElementById("pWGS").addEventListener("click",()=>setPreset("WGS"));
+document.getElementById("pUS").addEventListener("click",()=>setPreset("US"));
+document.getElementById("pSC").addEventListener("click",()=>setPreset("SC"));
+document.getElementById("pGAP").addEventListener("click",()=>setPreset("GAP"));
+
+document.getElementById("langBtn").addEventListener("click",()=>{ lang=lang==="en"?"fi":"en"; applyLang(); draw(); });
+document.getElementById("resetBtn").addEventListener("click",()=>location.reload());
+
+function applyLang(){
+  const t=T[lang]; document.documentElement.lang=lang;
+  const set=(id,txt)=>{const el=document.getElementById(id); if(el) el.textContent=txt;};
+  set("title",t.title); set("subtitle",t.subtitle);
+  set("hPreset",t.hPreset); set("pWGS",t.wgs); set("pUS",t.us); set("pSC",t.sc); set("pGAP",t.gap);
+  set("hKey",t.hKey); set("hFrac",t.hFrac); set("hClass",t.hClass);
+  set("note",t.note); set("langBtn",t.langBtn); set("resetBtn",t.reset);
+}
+
+// ---------- Init ----------
+applyLang(); draw();
+</script>
+</body>
+</html>
